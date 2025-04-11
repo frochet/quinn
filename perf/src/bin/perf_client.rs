@@ -221,28 +221,26 @@ async fn drain_stream(
     stream_stats: OpenStreamStats,
 ) -> Result<()> {
     #[rustfmt::skip]
-    let mut bufs = [
-        Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
-        Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
-        Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
-        Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
-        Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
-        Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
-        Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
-        Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
-    ];
+    // cycling the received data into a 3MiB Buf to emulate processing 3MiB continuously
+    // then flushing.
+    let mut buf = vec![0; 3145728];
     let download_start = Instant::now();
     let recv_stream_stats = stream_stats.new_receiver(&stream, download);
 
     let mut first_byte = true;
 
-    while let Some(size) = stream.read_chunks(&mut bufs[..]).await? {
+    let mut offset = 0;
+    while let Some(size) = stream.read(&mut buf[offset..]).await? {
         if first_byte {
             recv_stream_stats.on_first_byte(download_start.elapsed());
             first_byte = false;
         }
-        let bytes_received = bufs[..size].iter().map(|b| b.len()).sum();
+        let bytes_received = size;
         recv_stream_stats.on_bytes(bytes_received);
+        offset += size;
+        if offset == 3145728 {
+            offset = 0;
+        }
     }
 
     if first_byte {
@@ -277,6 +275,7 @@ async fn drive_uni(
 
             drop(permit);
         });
+        break Ok(());
     }
 }
 
